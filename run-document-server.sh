@@ -794,9 +794,7 @@ if [ ${ONLYOFFICE_DATA_CONTAINER} != "true" ]; then
   update_nginx_settings
   
   if [ "${PLUGINS_ENABLED}" = "true" ]; then
-    echo -n Installing plugins, please wait...
-    start_process documentserver-pluginsmanager.sh -r false --update=\"${APP_DIR}/sdkjs-plugins/plugin-list-default.json\" >/dev/null
-    echo Done
+    ( documentserver-pluginsmanager.sh -r false --update="${APP_DIR}/sdkjs-plugins/plugin-list-default.json" >/dev/null; echo "[pluginsmanager] Plugins initialization finished" >/proc/1/fd/1 ) &
   fi
 
   service supervisor start
