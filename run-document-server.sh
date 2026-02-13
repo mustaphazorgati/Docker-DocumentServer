@@ -105,7 +105,7 @@ NGINX_CONFIG_PATH="/etc/nginx/nginx.conf"
 NGINX_WORKER_PROCESSES=${NGINX_WORKER_PROCESSES:-1}
 NGINX_ACCESS_LOG=${NGINX_ACCESS_LOG:-false}
 # Limiting the maximum number of simultaneous connections due to possible memory shortage
-LIMIT=$(ulimit -n); [ "$LIMIT" = "unlimited" ] || [ "$LIMIT" -gt 524288 ] && LIMIT=524288
+LIMIT=$(ulimit -n); [ "$LIMIT" = "unlimited" ] || [ "$LIMIT" -gt 1048576 ] && LIMIT=1048576
 NGINX_WORKER_CONNECTIONS=${NGINX_WORKER_CONNECTIONS:-$LIMIT}
 RABBIT_CONNECTIONS=${RABBIT_CONNECTIONS:-$LIMIT}
 
