@@ -2,7 +2,7 @@ ARG BASE_VERSION=24.04
 
 ARG BASE_IMAGE=ubuntu:$BASE_VERSION
 
-FROM ${BASE_IMAGE} AS documentserver
+FROM ${BASE_IMAGE} AS documentserver-base
 LABEL maintainer="Ascensio System SIA <support@onlyoffice.com>"
 
 ARG BASE_VERSION
@@ -61,11 +61,7 @@ RUN echo "#!/bin/sh\nexit 101" > /usr/sbin/policy-rc.d && \
         net-tools \
         netcat-openbsd \
         nginx-extras \
-        postgresql \
-        postgresql-client \
         pwgen \
-        rabbitmq-server=3.12.1-1ubuntu1.2 \
-        redis-server \
         sudo \
         supervisor \
         ttf-mscorefonts-installer \
@@ -73,16 +69,9 @@ RUN echo "#!/bin/sh\nexit 101" > /usr/sbin/policy-rc.d && \
         unzip \
         xvfb \
         xxd \
-        zlib1g || dpkg --configure -a && \
-    # Added dpkg --configure -a to handle installation issues with rabbitmq-server on arm64 architecture
+        zlib1g && \
     if [  $(find /usr/share/fonts/truetype/msttcorefonts -maxdepth 1 -type f -iname '*.ttf' | wc -l) -lt 30 ]; \
         then echo 'msttcorefonts failed to download'; exit 1; fi  && \
-    echo "SERVER_ADDITIONAL_ERL_ARGS=\"+S 1:1\"" | tee -a /etc/rabbitmq/rabbitmq-env.conf && \
-    sed -i "s/bind .*/bind 127.0.0.1/g" /etc/redis/redis.conf && \
-    pg_conftool $PG_VERSION main set listen_addresses 'localhost' && \
-    service postgresql start && \
-    sudo -u postgres psql -c "CREATE USER $ONLYOFFICE_VALUE WITH password '$ONLYOFFICE_VALUE';" && \
-    sudo -u postgres psql -c "CREATE DATABASE $ONLYOFFICE_VALUE OWNER $ONLYOFFICE_VALUE;" && \
     wget -O basic.zip ${OC_DOWNLOAD_URL}/instantclient-basic-linux.$(dpkg --print-architecture | sed 's/amd64/x64/')-${OC_FILE_SUFFIX}.zip && \
     wget -O sqlplus.zip ${OC_DOWNLOAD_URL}/instantclient-sqlplus-linux.$(dpkg --print-architecture | sed 's/amd64/x64/')-${OC_FILE_SUFFIX}.zip && \
     unzip -o basic.zip -d /usr/share && \
@@ -90,7 +79,6 @@ RUN echo "#!/bin/sh\nexit 101" > /usr/sbin/policy-rc.d && \
     rm -f basic.zip sqlplus.zip && \
     mv /usr/share/instantclient_${OC_VER_DIR} /usr/share/instantclient && \
     find /usr/lib /lib -name "libaio.so.1$PACKAGE_SUFFIX" -exec bash -c 'ln -sf "$0" "$(dirname "$0")/libaio.so.1"' {} \; && \
-    service postgresql stop && \
     rm -rf /var/lib/apt/lists/*
 
 COPY config/supervisor/supervisor /etc/init.d/
@@ -113,15 +101,35 @@ ENV COMPANY_NAME=$COMPANY_NAME \
     DS_PLUGIN_INSTALLATION=false \
     DS_DOCKER_INSTALLATION=true
 
+RUN if [ -n "${PRODUCT_EDITION}" ]; then \
+    apt-get -y update && \
+    ACCEPT_EULA=Y apt-get -yq install \
+        redis-server \
+        postgresql postgresql-client \
+        rabbitmq-server && \
+    dpkg --configure -a && \
+    sed -i "s/bind .*/bind 127.0.0.1/g" /etc/redis/redis.conf && \
+    echo "SERVER_ADDITIONAL_ERL_ARGS=\"+S 1:1\"" | tee -a /etc/rabbitmq/rabbitmq-env.conf && \
+    pg_conftool $PG_VERSION main set listen_addresses 'localhost' && \
+    service postgresql start && \
+    sudo -u postgres psql -c "CREATE USER $ONLYOFFICE_VALUE WITH password '$ONLYOFFICE_VALUE';" && \
+    sudo -u postgres psql -c "CREATE DATABASE $ONLYOFFICE_VALUE OWNER $ONLYOFFICE_VALUE;" && \
+    service postgresql stop && \
+    rm -rf /var/lib/apt/lists/*; fi
+
 RUN PACKAGE_FILE="${COMPANY_NAME}-${PRODUCT_NAME}${PRODUCT_EDITION}${PACKAGE_VERSION:+_$PACKAGE_VERSION}_${TARGETARCH:-$(dpkg --print-architecture)}.deb" && \
     wget -q -P /tmp "$PACKAGE_BASEURL/$PACKAGE_FILE" && \
     apt-get -y update && \
-    service postgresql start && \
+    [ -n "${PRODUCT_EDITION}" ] && service postgresql start || true && \
     apt-get -yq install /tmp/$PACKAGE_FILE && \
-    if [ "${PRODUCT_EDITION}" != "-ee" ] && [ "${PRODUCT_EDITION}" != "-de" ]; then rm -f /etc/supervisor/conf.d/ds-adminpanel.conf && sed -i 's/,adminpanel//' /etc/supervisor/conf.d/ds.conf; fi && \
-    PGPASSWORD=$ONLYOFFICE_VALUE dropdb -h localhost -p 5432 -U $ONLYOFFICE_VALUE $ONLYOFFICE_VALUE && \
-    sudo -u postgres psql -c "DROP ROLE onlyoffice;" && \
-    service postgresql stop && \
+    if [ -n "${PRODUCT_EDITION}" ]; then \
+        PGPASSWORD=$ONLYOFFICE_VALUE dropdb -h localhost -p 5432 -U $ONLYOFFICE_VALUE $ONLYOFFICE_VALUE && \
+        sudo -u postgres psql -c "DROP ROLE onlyoffice;" && \
+        service postgresql stop; \
+    else \
+        rm -f /etc/supervisor/conf.d/ds-adminpanel.conf && \
+        sed -i 's/,adminpanel//' /etc/supervisor/conf.d/ds.conf; \
+    fi && \
     chmod 755 /etc/init.d/supervisor && \
     sed "s/COMPANY_NAME/${COMPANY_NAME}/g" -i /etc/supervisor/conf.d/*.conf && \
     service supervisor stop && \
@@ -134,6 +142,10 @@ RUN PACKAGE_FILE="${COMPANY_NAME}-${PRODUCT_NAME}${PRODUCT_EDITION}${PACKAGE_VER
     rm -rf /var/log/$COMPANY_NAME && \
     rm -rf /var/lib/apt/lists/*
 
-VOLUME /var/log/$COMPANY_NAME /var/lib/$COMPANY_NAME /var/www/$COMPANY_NAME/Data /var/lib/postgresql /var/lib/rabbitmq /var/lib/redis /usr/share/fonts/truetype/custom
+FROM documentserver-base AS documentserver-community
+VOLUME /var/log/$COMPANY_NAME /var/lib/$COMPANY_NAME /var/www/$COMPANY_NAME/Data /usr/share/fonts/truetype/custom
+ENTRYPOINT ["/app/ds/run-document-server.sh"]
 
+FROM documentserver-base AS documentserver-enterprise
+VOLUME /var/log/$COMPANY_NAME /var/lib/$COMPANY_NAME /var/www/$COMPANY_NAME/Data /var/lib/postgresql /var/lib/rabbitmq /var/lib/redis /usr/share/fonts/truetype/custom
 ENTRYPOINT ["/app/ds/run-document-server.sh"]

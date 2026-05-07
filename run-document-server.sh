@@ -128,13 +128,8 @@ ALLOW_PRIVATE_IP_ADDRESS=${ALLOW_PRIVATE_IP_ADDRESS:-false}
 
 GENERATE_FONTS=${GENERATE_FONTS:-true}
 
-if [[ ${PRODUCT_NAME}${PRODUCT_EDITION} == "documentserver" ]]; then
-  REDIS_ENABLED=false
-else
-  REDIS_ENABLED=true
-fi
-
-[[ "${PRODUCT_EDITION}" =~ ^-(ee|de)$ ]] && ADMINPANEL_AVAILABLE=true || ADMINPANEL_AVAILABLE=false
+[ -n "${PRODUCT_EDITION}" ] && _is_commercial=true || _is_commercial=false
+REDIS_AVAILABLE=${_is_commercial} RABBITMQ_AVAILABLE=${_is_commercial} PG_AVAILABLE=${_is_commercial} ADMINPANEL_AVAILABLE=${_is_commercial}
 
 ONLYOFFICE_DEFAULT_CONFIG=${CONF_DIR}/local.json
 ONLYOFFICE_LOG4JS_CONFIG=${CONF_DIR}/log4js/production.json
@@ -161,57 +156,62 @@ if [ "${LETS_ENCRYPT_DOMAIN}" != "" -a "${LETS_ENCRYPT_MAIL}" != "" ]; then
 fi
 
 read_setting(){
-  deprecated_var POSTGRESQL_SERVER_HOST DB_HOST
-  deprecated_var POSTGRESQL_SERVER_PORT DB_PORT
-  deprecated_var POSTGRESQL_SERVER_DB_NAME DB_NAME
-  deprecated_var POSTGRESQL_SERVER_USER DB_USER
-  deprecated_var POSTGRESQL_SERVER_PASS DB_PWD
-  deprecated_var RABBITMQ_SERVER_URL AMQP_URI
-  deprecated_var AMQP_SERVER_URL AMQP_URI
-  deprecated_var AMQP_SERVER_TYPE AMQP_TYPE
-
   METRICS_ENABLED="${METRICS_ENABLED:-false}"
   METRICS_HOST="${METRICS_HOST:-localhost}"
   METRICS_PORT="${METRICS_PORT:-8125}"
   METRICS_PREFIX="${METRICS_PREFIX:-.ds}"
 
-  DB_HOST=${DB_HOST:-${POSTGRESQL_SERVER_HOST:-$(${JSON} services.CoAuthoring.sql.dbHost)}}
-  DB_TYPE=${DB_TYPE:-$(${JSON} services.CoAuthoring.sql.type)}
-  case $DB_TYPE in
-    "postgres")
-      DB_PORT=${DB_PORT:-"5432"}
-      ;;
-    "mariadb"|"mysql")
-      DB_PORT=${DB_PORT:-"3306"}
-      ;;
-    "dameng")
-      DB_PORT=${DB_PORT:-"5236"}
-      ;;
-    "mssql")
-      DB_PORT=${DB_PORT:-"1433"}
-      ;;
-    "oracle")
-      DB_PORT=${DB_PORT:-"1521"}
-      ;;
-    "")
-      DB_PORT=${DB_PORT:-${POSTGRESQL_SERVER_PORT:-$(${JSON} services.CoAuthoring.sql.dbPort)}}
-      ;;
-    *)
-      echo "ERROR: unknown database type"
-      exit 1
-      ;;
-  esac
-  DB_NAME=${DB_NAME:-${POSTGRESQL_SERVER_DB_NAME:-$(${JSON} services.CoAuthoring.sql.dbName)}}
-  DB_USER=${DB_USER:-${POSTGRESQL_SERVER_USER:-$(${JSON} services.CoAuthoring.sql.dbUser)}}
-  DB_PWD=${DB_PWD:-${POSTGRESQL_SERVER_PASS:-$(${JSON} services.CoAuthoring.sql.dbPass)}}
+  if [ ${PG_AVAILABLE} = "true" ]; then
+    deprecated_var POSTGRESQL_SERVER_HOST DB_HOST
+    deprecated_var POSTGRESQL_SERVER_PORT DB_PORT
+    deprecated_var POSTGRESQL_SERVER_DB_NAME DB_NAME
+    deprecated_var POSTGRESQL_SERVER_USER DB_USER
+    deprecated_var POSTGRESQL_SERVER_PASS DB_PWD
+    DB_HOST=${DB_HOST:-${POSTGRESQL_SERVER_HOST:-$(${JSON} services.CoAuthoring.sql.dbHost)}}
+    DB_TYPE=${DB_TYPE:-$(${JSON} services.CoAuthoring.sql.type)}
+    case $DB_TYPE in
+      "postgres")
+        DB_PORT=${DB_PORT:-"5432"}
+        ;;
+      "mariadb"|"mysql")
+        DB_PORT=${DB_PORT:-"3306"}
+        ;;
+      "dameng")
+        DB_PORT=${DB_PORT:-"5236"}
+        ;;
+      "mssql")
+        DB_PORT=${DB_PORT:-"1433"}
+        ;;
+      "oracle")
+        DB_PORT=${DB_PORT:-"1521"}
+        ;;
+      "")
+        DB_PORT=${DB_PORT:-${POSTGRESQL_SERVER_PORT:-$(${JSON} services.CoAuthoring.sql.dbPort)}}
+        ;;
+      *)
+        echo "ERROR: unknown database type"
+        exit 1
+        ;;
+    esac
+    DB_NAME=${DB_NAME:-${POSTGRESQL_SERVER_DB_NAME:-$(${JSON} services.CoAuthoring.sql.dbName)}}
+    DB_USER=${DB_USER:-${POSTGRESQL_SERVER_USER:-$(${JSON} services.CoAuthoring.sql.dbUser)}}
+    DB_PWD=${DB_PWD:-${POSTGRESQL_SERVER_PASS:-$(${JSON} services.CoAuthoring.sql.dbPass)}}
+  fi
 
-  RABBITMQ_SERVER_URL=${RABBITMQ_SERVER_URL:-$(${JSON} rabbitmq.url)}
-  AMQP_URI=${AMQP_URI:-${AMQP_SERVER_URL:-${RABBITMQ_SERVER_URL}}}
-  AMQP_TYPE=${AMQP_TYPE:-${AMQP_SERVER_TYPE:-rabbitmq}}
-  parse_rabbitmq_url ${AMQP_URI}
+  if [ ${RABBITMQ_AVAILABLE} = "true" ]; then
+    deprecated_var RABBITMQ_SERVER_URL AMQP_URI
+    deprecated_var AMQP_SERVER_URL AMQP_URI
+    deprecated_var AMQP_SERVER_TYPE AMQP_TYPE
+    RABBITMQ_SERVER_URL=${RABBITMQ_SERVER_URL:-$(${JSON} rabbitmq.url)}
+    AMQP_URI=${AMQP_URI:-${AMQP_SERVER_URL:-${RABBITMQ_SERVER_URL}}}
+    AMQP_TYPE=${AMQP_TYPE:-${AMQP_SERVER_TYPE:-rabbitmq}}
+    parse_rabbitmq_url ${AMQP_URI}
+  fi
 
-  REDIS_SERVER_HOST=${REDIS_SERVER_HOST:-$(${JSON} services.CoAuthoring.redis.host)}
-  REDIS_SERVER_PORT=${REDIS_SERVER_PORT:-6379}
+  if [ ${REDIS_AVAILABLE} = "true" ]; then
+    REDIS_SERVER_HOST=${REDIS_SERVER_HOST:-$(${JSON} services.CoAuthoring.redis.host)}
+    REDIS_SERVER_PORT=${REDIS_SERVER_PORT:-6379}
+  fi
 
   DS_LOG_LEVEL=${DS_LOG_LEVEL:-$(${JSON_LOG} categories.default.level)}
 }
@@ -717,50 +717,47 @@ if [ ${ONLYOFFICE_DATA_CONTAINER_HOST} = "localhost" ]; then
 
   update_ds_settings
 
-  # update settings by env variables
-  if [ $DB_HOST != "localhost" ]; then
-    update_db_settings
-    waiting_for_db
-    create_db_tbl
-  else
-    # change rights for postgres directory
-    chown -R postgres:postgres ${PG_ROOT}
-    chmod -R 700 ${PG_ROOT}
+  if [ ${PG_AVAILABLE} = "true" ]; then
+    if [ $DB_HOST != "localhost" ]; then
+      update_db_settings
+      waiting_for_db
+      create_db_tbl
+    else
+      chown -R postgres:postgres ${PG_ROOT}
+      chmod -R 700 ${PG_ROOT}
 
-    # create new db if it isn't exist
-    if [ ! -d ${PGDATA} ]; then
-      create_postgresql_cluster
-      PG_NEW_CLUSTER=true
+      if [ ! -d ${PGDATA} ]; then
+        create_postgresql_cluster
+        PG_NEW_CLUSTER=true
+      fi
+      LOCAL_SERVICES+=("postgresql")
     fi
-    LOCAL_SERVICES+=("postgresql")
   fi
 
-  if [ ${AMQP_SERVER_HOST} != "localhost" ]; then
-    update_rabbitmq_setting
-  else
-    # change rights for rabbitmq directory
-    chown -R rabbitmq:rabbitmq ${RABBITMQ_DATA}
-    chmod -R go=rX,u=rwX ${RABBITMQ_DATA}
-    if [ -f ${RABBITMQ_DATA}/.erlang.cookie ]; then
-        chmod 400 ${RABBITMQ_DATA}/.erlang.cookie
+  if [ ${RABBITMQ_AVAILABLE} = "true" ]; then
+    if [ ${AMQP_SERVER_HOST} != "localhost" ]; then
+      update_rabbitmq_setting
+    else
+      chown -R rabbitmq:rabbitmq ${RABBITMQ_DATA}
+      chmod -R go=rX,u=rwX ${RABBITMQ_DATA}
+      if [ -f ${RABBITMQ_DATA}/.erlang.cookie ]; then
+          chmod 400 ${RABBITMQ_DATA}/.erlang.cookie
+      fi
+
+      sed -i '/^[[:space:]]*ulimit[[:space:]]\+-n[[:space:]]\+/d' /etc/default/rabbitmq-server
+      printf 'ulimit -n %s\n' "${RABBIT_CONNECTIONS}" >> /etc/default/rabbitmq-server
+
+      LOCAL_SERVICES+=("rabbitmq-server")
+      rm -rf /var/run/rabbitmq
     fi
-
-    sed -i '/^[[:space:]]*ulimit[[:space:]]\+-n[[:space:]]\+/d' /etc/default/rabbitmq-server
-    printf 'ulimit -n %s\n' "${RABBIT_CONNECTIONS}" >> /etc/default/rabbitmq-server
-
-    LOCAL_SERVICES+=("rabbitmq-server")
-    # allow Rabbitmq startup after container kill
-    rm -rf /var/run/rabbitmq
   fi
 
-  if [ ${REDIS_ENABLED} = "true" ]; then
+  if [ ${REDIS_AVAILABLE} = "true" ]; then
     if [ ${REDIS_SERVER_HOST} != "localhost" ]; then
       update_redis_settings
     else
-      # change rights for redis directory
       chown -R redis:redis ${REDIS_DATA}
       chmod -R 750 ${REDIS_DATA}
-
       LOCAL_SERVICES+=("redis-server")
     fi
   fi
@@ -782,7 +779,7 @@ for i in ${LOCAL_SERVICES[@]}; do
   service $i start
 done
 
-if [ "${DB_TYPE}" = "postgres" ]; then
+if [ ${PG_AVAILABLE} = "true" ] && [ "${DB_TYPE}" = "postgres" ]; then
   PG_DB_EXISTS=$(PGPASSWORD="$DB_PWD" psql -h ${DB_HOST} -p${DB_PORT} -U "${DB_USER}" -tAc "SELECT 1 FROM pg_database WHERE datname='${DB_NAME}';" 2>/dev/null)
   if [ ${PG_NEW_CLUSTER} = "true" ] || [ "${PG_DB_EXISTS}" != "1" ]; then
     create_postgresql_db
@@ -791,11 +788,9 @@ if [ "${DB_TYPE}" = "postgres" ]; then
 fi
 
 if [ ${ONLYOFFICE_DATA_CONTAINER} != "true" ]; then
-  waiting_for_db
-  waiting_for_amqp
-  if [ ${REDIS_ENABLED} = "true" ]; then
-    waiting_for_redis
-  fi
+  [ ${PG_AVAILABLE} = "true" ] && waiting_for_db
+  [ ${RABBITMQ_AVAILABLE} = "true" ] && waiting_for_amqp
+  [ ${REDIS_AVAILABLE} = "true" ] && waiting_for_redis
 
   if [ "${IS_UPGRADE}" = "true" ]; then
     upgrade_db_tbl
