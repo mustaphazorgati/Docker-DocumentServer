@@ -537,11 +537,18 @@ upgrade_mssql_tbl() {
   $MSSQL < "$APP_DIR/server/schema/mssql/createdb.sql" >/dev/null 2>&1
 }
 
-upgrade_oracle_tbl() {
-  ORACLE_SQL="sqlplus $DB_USER/$DB_PWD@//$DB_HOST:$DB_PORT/${DB_NAME}"
+run_oracle_sql_file() {
+  local sql_file="$1"
 
-  $ORACLE_SQL @$APP_DIR/server/schema/oracle/removetbl.sql >/dev/null 2>&1
-  $ORACLE_SQL @$APP_DIR/server/schema/oracle/createdb.sql >/dev/null 2>&1
+  sqlplus -s -L "$DB_USER/$DB_PWD@//$DB_HOST:$DB_PORT/${DB_NAME}" >/dev/null 2>&1 <<EOF
+@"$sql_file"
+exit
+EOF
+}
+
+upgrade_oracle_tbl() {
+  run_oracle_sql_file "$APP_DIR/server/schema/oracle/removetbl.sql"
+  run_oracle_sql_file "$APP_DIR/server/schema/oracle/createdb.sql"
 }
 
 create_postgresql_tbl() {
@@ -578,9 +585,7 @@ create_mssql_tbl() {
 }
 
 create_oracle_tbl() {
-  ORACLE_SQL="sqlplus $DB_USER/$DB_PWD@//$DB_HOST:$DB_PORT/${DB_NAME}"
-
-  $ORACLE_SQL @$APP_DIR/server/schema/oracle/createdb.sql >/dev/null 2>&1
+  run_oracle_sql_file "$APP_DIR/server/schema/oracle/createdb.sql"
 }
 
 update_welcome_page() {
