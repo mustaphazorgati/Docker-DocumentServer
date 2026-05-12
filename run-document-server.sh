@@ -195,7 +195,7 @@ read_setting(){
     esac
     DB_NAME=${DB_NAME:-${POSTGRESQL_SERVER_DB_NAME:-$(${JSON} services.CoAuthoring.sql.dbName)}}
     DB_USER=${DB_USER:-${POSTGRESQL_SERVER_USER:-$(${JSON} services.CoAuthoring.sql.dbUser)}}
-    DB_PWD=${DB_PWD:-${POSTGRESQL_SERVER_PASS:-$(${JSON} services.CoAuthoring.sql.dbPass)}}
+    DB_PWD=${DB_PWD:-${DB_PASSWORD:-${POSTGRESQL_SERVER_PASS:-$(${JSON} services.CoAuthoring.sql.dbPass)}}}
   fi
 
   if [ ${RABBITMQ_AVAILABLE} = "true" ]; then
